@@ -126,18 +126,13 @@ router.put('/profile', protect, async (req, res) => {
 
     const updatedUser = await user.save();
     
-    res.json({
-      _id: updatedUser.id,
-      name: updatedUser.name,
-      email: updatedUser.email,
-      role: updatedUser.role,
-      departmentId: updatedUser.departmentId,
-      tutorId: updatedUser.tutorId,
-      year: updatedUser.year,
-      division: updatedUser.division,
-      signatureUrl: updatedUser.signatureUrl,
-      isApproved: updatedUser.isApproved
-    });
+    // Populate before sending back to fix "undefined" display issue in frontend
+    const populatedUser = await User.findById(updatedUser._id)
+      .populate('departmentId', 'name')
+      .populate('tutorId', 'name email')
+      .select('-password');
+    
+    res.json(populatedUser);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
