@@ -123,13 +123,10 @@ router.get('/', protect, async (req, res) => {
         .populate('approvals.approverId', 'name role')
         .sort({ createdAt: -1 });
     } else {
-      // Approvers see documents where they are assigned
+      // Approvers see documents where they are strictly assigned
       const userId = req.user.id;
       docs = await Document.find({
-        $or: [
-          { [`assigned.${req.user.role}`]: userId },
-          { workflow: req.user.role }, // Fallback for legacy docs
-        ]
+        [`assigned.${req.user.role}`]: userId
       })
         .populate('studentId', 'name registerNo dept year division tutorId departmentId')
         .populate('approvals.approverId', 'name role')
