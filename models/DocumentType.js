@@ -26,6 +26,7 @@ const documentTypeSchema = mongoose.Schema({
   }],
   elements: [elementSchema], // Form field definitions
   letterTemplate: { type: String, default: '' }, // Template with {{placeholders}}
+  allowCustomHeading: { type: Boolean, default: false },
   includeLetterhead: { type: Boolean, default: true },
   includeRefDate: { type: Boolean, default: true },
   includeSeal: { type: Boolean, default: false },

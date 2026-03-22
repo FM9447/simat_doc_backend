@@ -11,6 +11,7 @@ const approvalSchema = mongoose.Schema({
 const documentSchema = mongoose.Schema({
   studentId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   title: { type: String, required: true },
+  customHeading: { type: String, default: '' },
   description: { type: String, default: '' },
   category: { 
     type: String, 

@@ -231,6 +231,14 @@ router.put('/users/:id', protect, authorizeRoles('admin'), async (req, res) => {
     if (role) user.role = role === 'teacher' ? 'tutor' : role;
     if (dept !== undefined) user.dept = dept;
     if (isApproved !== undefined) user.isApproved = isApproved;
+    
+    // ENFORCE SINGLE PRINCIPAL: If this user is being set as the approved principal, logically un-approve all others
+    if (user.role === 'principal' && user.isApproved === true) {
+      await User.updateMany(
+        { _id: { $ne: user._id }, role: 'principal' },
+        { $set: { isApproved: false } }
+      );
+    }
     if (departmentId !== undefined) user.departmentId = departmentId;
     if (tutorId !== undefined) user.tutorId = tutorId;
     if (year !== undefined) user.year = year;

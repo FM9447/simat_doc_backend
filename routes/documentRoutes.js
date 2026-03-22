@@ -55,7 +55,7 @@ async function autoAssign(steps, student) {
 // @access  Private (Student only)
 router.post('/', protect, authorizeRoles('student'), upload.single('file'), async (req, res) => {
   try {
-    const { title, description, category, priority, formData } = req.body;
+    const { title, customHeading, description, category, priority, formData } = req.body;
     
     // Parse formData if it's stringified from the frontend
     let parsedFormData = formData;
@@ -79,6 +79,7 @@ router.post('/', protect, authorizeRoles('student'), upload.single('file'), asyn
     const document = new Document({
       studentId: req.user.id,
       title,
+      customHeading: customHeading || '',
       description: description || title,
       category,
       flow: category, // Store workflow name
