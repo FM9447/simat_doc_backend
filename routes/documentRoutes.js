@@ -8,15 +8,9 @@ const Notification = require('../models/Notification');
 const mongoose = require('mongoose');
 const { protect, authorizeRoles } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinary');
+const NotificationService = require('../services/notificationService');
 
-// Helper: push notification
-async function pushNotif(userId, message, type = 'info') {
-  try {
-    await Notification.create({ userId, message, type });
-  } catch (e) {
-    console.error('Notification push failed:', e.message);
-  }
-}
+
 
 // Helper: auto-assign approvers by role, student's tutor, and dept HOD
 async function autoAssign(steps, student) {
@@ -98,7 +92,7 @@ router.post('/', protect, authorizeRoles('student'), upload.single('file'), asyn
     const firstRole = workflow[0];
     const firstApproverId = assigned[firstRole];
     if (firstApproverId) {
-      await pushNotif(firstApproverId, `New document pending: "${title}" from ${student?.name || 'a student'}`, 'info');
+      await NotificationService.send(firstApproverId, `New document pending: "${title}" from ${student?.name || 'a student'}`, 'info');
     }
 
     res.status(201).json(createdDoc);
@@ -176,21 +170,21 @@ router.post('/:id/approve', protect, upload.single('signature'), async (req, res
       document.status = 'rejected';
       document.rejectionReason = comment;
       // Notify student
-      await pushNotif(document.studentId, `Your "${document.title}" was rejected by ${req.user.role.toUpperCase()}. Reason: ${comment || 'No reason given'}`, 'err');
+      await NotificationService.send(document.studentId, `Your "${document.title}" was rejected by ${req.user.role.toUpperCase()}. Reason: ${comment || 'No reason given'}`, 'err');
     } else {
       // Check if all needed persons have signed
       if (document.approvals.length >= document.workflow.length) {
         document.status = 'final_approved';
-        await pushNotif(document.studentId, `Your "${document.title}" is fully approved! Download your certificate.`, 'ok');
+        await NotificationService.send(document.studentId, `Your "${document.title}" is fully approved! Download your certificate.`, 'ok');
       } else {
         document.status = 'partially_approved';
-        await pushNotif(document.studentId, `Your "${document.title}" approved by ${req.user.role.toUpperCase()}.`, 'ok');
+        await NotificationService.send(document.studentId, `Your "${document.title}" approved by ${req.user.role.toUpperCase()}.`, 'ok');
         
         // Notify next approver
         const nextRole = document.workflow[document.approvals.length];
-        const nextApproverId = document.assigned.get(nextRole);
+        const nextApproverId = document.assigned instanceof Map ? document.assigned.get(nextRole) : document.assigned[nextRole];
         if (nextApproverId) {
-          await pushNotif(nextApproverId, `Document pending your approval: "${document.title}"`, 'info');
+          await NotificationService.send(nextApproverId, `Document pending your approval: "${document.title}"`, 'info');
         }
       }
     }

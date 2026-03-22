@@ -18,7 +18,8 @@ const userSchema = mongoose.Schema({
   division: { type: String }, // A, B, C
   hodOfDeptId: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' }, // For HODs
   signatureUrl: { type: String }, // Stored in Cloudinary
-  isApproved: { type: Boolean, default: false }
+  isApproved: { type: Boolean, default: false },
+  fcmTokens: [{ type: String }],
 }, {
   timestamps: true,
 });

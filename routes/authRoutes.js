@@ -4,6 +4,8 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
 const { upload } = require('../config/cloudinary');
 const { protect, authorizeRoles } = require('../middleware/authMiddleware');
+const NotificationService = require('../services/notificationService');
+const NotificationService = require('../services/notificationService');
 
 const router = express.Router();
 
@@ -33,16 +35,24 @@ router.post('/register', async (req, res) => {
       registerNo, dept, departmentId, tutorId, year, division
     });
 
-    if (user) {
-      res.status(201).json({
-        _id: user.id, name: user.name, email: user.email, role: user.role, 
-        dept: user.dept, departmentId: user.departmentId, tutorId: user.tutorId,
-        year: user.year, division: user.division,
-        signatureUrl: user.signatureUrl,
-        isApproved: user.isApproved,
-        token: generateToken(user.id),
-      });
-    } else {
+      if (user) {
+        res.status(201).json({
+          _id: user.id, name: user.name, email: user.email, role: user.role, 
+          dept: user.dept, departmentId: user.departmentId, tutorId: user.tutorId,
+          year: user.year, division: user.division,
+          signatureUrl: user.signatureUrl,
+          isApproved: user.isApproved,
+          token: generateToken(user.id),
+        });
+
+        // Notify Admin about new registration
+        User.find({ role: 'admin' }).then(admins => {
+          const message = `New user registration: ${user.name} (${user.role})`;
+          admins.forEach(adminUser => {
+            NotificationService.send(adminUser._id, message, 'info');
+          });
+        });
+      } else {
       res.status(400).json({ message: 'Invalid user data' });
     }
   } catch (error) {
@@ -253,12 +263,20 @@ router.put('/users/:id', protect, authorizeRoles('admin'), async (req, res) => {
 
 // @desc    Delete user (Admin only)
 // @route   DELETE /api/auth/users/:id
-router.delete('/users/:id', protect, authorizeRoles('admin'), async (req, res) => {
+// @desc    Update FCM Token
+// @route   POST /api/auth/fcm-token
+// @access  Private
+router.post('/fcm-token', protect, async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
-    if (!user) return res.status(404).json({ message: 'User not found' });
-    await user.deleteOne();
-    res.json({ message: 'User removed successfully' });
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ message: 'Token is required' });
+
+    const user = await User.findById(req.user._id);
+    if (!user.fcmTokens.includes(token)) {
+      user.fcmTokens.push(token);
+      await user.save();
+    }
+    res.json({ message: 'FCM Token updated successfully' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
