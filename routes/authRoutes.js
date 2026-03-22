@@ -5,7 +5,6 @@ const bcrypt = require('bcrypt');
 const { upload } = require('../config/cloudinary');
 const { protect, authorizeRoles } = require('../middleware/authMiddleware');
 const NotificationService = require('../services/notificationService');
-const NotificationService = require('../services/notificationService');
 
 const router = express.Router();
 
