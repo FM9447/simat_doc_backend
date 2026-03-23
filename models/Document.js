@@ -33,7 +33,7 @@ const documentSchema = mongoose.Schema({
   rejectionReason: { type: String },
   formData: { type: Map, of: mongoose.Schema.Types.Mixed }, // Stores { 'Reason': 'Higher Studies', 'Year': '2024' }
   workflow: [{ type: String }], // Array of role names e.g. ['tutor', 'hod', 'principal']
-  assigned: { type: Map, of: String }, // Map of role -> userId e.g. { tutor: '...', hod: '...' }
+  assigned: { type: Map, of: mongoose.Schema.Types.Mixed }, // Map of role -> { id, name }
   approvals: [approvalSchema],
 }, {
   timestamps: true,

@@ -55,16 +55,17 @@ class NotificationService {
       if (user && user.fcmTokens && user.fcmTokens.length > 0) {
         const payload = {
           notification: {
-            title: this._getDisplayName(type),
+            title: NotificationService._getDisplayName(type),
             body: message,
           },
           android: {
             notification: {
-              icon: 'notification_icon',
+              icon: 'ic_launcher', // Use standard launcher icon
               click_action: 'FLUTTER_NOTIFICATION_CLICK',
+              channel_id: 'doctransit_channel', // Match Flutter channel
+              notification_priority: 'PRIORITY_HIGH',
             }
           },
-          // You can also add custom data here
           data: {
             click_action: 'FLUTTER_NOTIFICATION_CLICK',
             type: type,

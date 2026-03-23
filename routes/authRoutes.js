@@ -29,29 +29,36 @@ router.post('/register', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
+    // Security: Prevent public registration as 'admin'
+    let finalRole = role === 'teacher' ? 'tutor' : role;
+    if (finalRole === 'admin') {
+      finalRole = 'student'; // Silently downgrade or return error. Downgrading is safer for preventing enumeration.
+    }
+
     const user = await User.create({
-      name, email, password: hashedPassword, role: role === 'teacher' ? 'tutor' : role, 
+      name, email, password: hashedPassword, role: finalRole, 
       registerNo, dept, departmentId, tutorId, year, division
     });
 
-      if (user) {
-        res.status(201).json({
-          _id: user.id, name: user.name, email: user.email, role: user.role, 
-          dept: user.dept, departmentId: user.departmentId, tutorId: user.tutorId,
-          year: user.year, division: user.division,
-          signatureUrl: user.signatureUrl,
-          isApproved: user.isApproved,
-          token: generateToken(user.id),
-        });
+    if (user) {
+      res.status(201).json({
+        _id: user.id, name: user.name, email: user.email, role: user.role, 
+        dept: user.dept, departmentId: user.departmentId, tutorId: user.tutorId,
+        year: user.year, division: user.division,
+        signatureUrl: user.signatureUrl,
+        isApproved: user.isApproved,
+        delegatedTo: user.delegatedTo,
+        token: generateToken(user.id),
+      });
 
-        // Notify Admin about new registration
-        User.find({ role: 'admin' }).then(admins => {
-          const message = `New user registration: ${user.name} (${user.role})`;
-          admins.forEach(adminUser => {
-            NotificationService.send(adminUser._id, message, 'info');
-          });
+      // Notify Admin about new registration
+      User.find({ role: 'admin' }).then(admins => {
+        const message = `New user registration: ${user.name} (${user.role})`;
+        admins.forEach(adminUser => {
+          NotificationService.send(adminUser._id, message, 'info');
         });
-      } else {
+      });
+    } else {
       res.status(400).json({ message: 'Invalid user data' });
     }
   } catch (error) {
@@ -78,6 +85,7 @@ router.post('/login', async (req, res) => {
         year: user.year, division: user.division,
         signatureUrl: user.signatureUrl,
         isApproved: user.isApproved,
+        delegatedTo: user.delegatedTo,
         token: generateToken(user.id),
       });
     } else {
@@ -109,11 +117,16 @@ router.get('/tutors', async (req, res) => {
 // @route   GET /api/auth/profile
 // @access  Private
 router.get('/profile', protect, async (req, res) => {
-  const user = await User.findById(req.user._id)
-    .populate('departmentId', 'name')
-    .populate('tutorId', 'name email')
-    .select('-password');
-  res.json(user);
+  try {
+    const user = await User.findById(req.user._id)
+      .populate('departmentId', 'name')
+      .populate('tutorId', 'name email')
+      .populate('delegatedTo', 'name email role')
+      .select('-password');
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
 });
 
 // @desc    Update user profile
@@ -135,10 +148,10 @@ router.put('/profile', protect, async (req, res) => {
 
     const updatedUser = await user.save();
     
-    // Populate before sending back to fix "undefined" display issue in frontend
     const populatedUser = await User.findById(updatedUser._id)
       .populate('departmentId', 'name')
       .populate('tutorId', 'name email')
+      .populate('delegatedTo', 'name email role')
       .select('-password');
     
     res.json(populatedUser);
@@ -208,8 +221,21 @@ router.get('/users', protect, authorizeRoles('admin'), async (req, res) => {
   }
 });
 
-// DELETE the old tutor route which was down here
-
+// @desc    Get colleagues (same role) for delegation
+// @route   GET /api/auth/colleagues
+// @access  Private
+router.get('/colleagues', protect, async (req, res) => {
+  try {
+    const users = await User.find({ 
+      role: req.user.role, 
+      _id: { $ne: req.user._id },
+      isApproved: true 
+    }).select('name email role');
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
 
 // @desc    Approve/Unapprove user (Admin only)
 // @route   PUT /api/auth/users/:id/approve
@@ -246,7 +272,6 @@ router.put('/users/:id', protect, authorizeRoles('admin'), async (req, res) => {
     if (dept !== undefined) user.dept = dept;
     if (isApproved !== undefined) user.isApproved = isApproved;
     
-    // ENFORCE SINGLE PRINCIPAL: If this user is being set as the approved principal, logically un-approve all others
     if (user.role === 'principal' && user.isApproved === true) {
       await User.updateMany(
         { _id: { $ne: user._id }, role: 'principal' },
@@ -265,8 +290,6 @@ router.put('/users/:id', protect, authorizeRoles('admin'), async (req, res) => {
   }
 });
 
-// @desc    Delete user (Admin only)
-// @route   DELETE /api/auth/users/:id
 // @desc    Update FCM Token
 // @route   POST /api/auth/fcm-token
 // @access  Private
@@ -275,13 +298,11 @@ router.post('/fcm-token', protect, async (req, res) => {
     const { token } = req.body;
     if (!token) return res.status(400).json({ message: 'Token is required' });
 
-    // 1. Remove this token from any OTHER user who might have it (shared device cleanup)
     await User.updateMany(
       { fcmTokens: token, _id: { $ne: req.user._id } },
       { $pull: { fcmTokens: token } }
     );
 
-    // 2. Add to current user
     const user = await User.findById(req.user._id);
     if (!user.fcmTokens.includes(token)) {
       user.fcmTokens.push(token);
@@ -289,6 +310,55 @@ router.post('/fcm-token', protect, async (req, res) => {
     }
     res.json({ message: 'FCM Token updated and synchronized successfully' });
   } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Set/Clear Role Delegation (Vacation Mode)
+// @route   PUT /api/auth/delegate
+// @access  Private
+router.put('/delegate', protect, async (req, res) => {
+  try {
+    const { delegatedToId } = req.body;
+    const Document = require('../models/Document');
+
+    const user = await User.findById(req.user._id);
+    if (!user) return res.status(404).json({ message: 'User not found' });
+
+    if (delegatedToId) {
+      const delegate = await User.findById(delegatedToId);
+      if (!delegate) return res.status(404).json({ message: 'Delegate user not found' });
+      if (delegate.role !== user.role && user.role !== 'admin') {
+         return res.status(400).json({ message: 'Delegate must have the same role' });
+      }
+      user.delegatedTo = delegatedToId;
+
+      const roleField = `assigned.${user.role}`;
+      const documents = await Document.find({ 
+        [roleField]: user._id,
+        status: { $in: ['pending', 'partially_approved'] }
+      });
+
+      for (const doc of documents) {
+        doc.assigned[user.role] = delegatedToId;
+        doc.markModified('assigned');
+        doc.approvals.push({
+          approverId: user._id,
+          role: user.role,
+          action: 'forwarded',
+          comment: `System: Auto-delegated to ${delegate.name} due to Vacation Mode.`,
+        });
+        await doc.save();
+        await NotificationService.send(delegatedToId, `New document delegated to you: "${doc.title}"`, 'info');
+      }
+    } else {
+      user.delegatedTo = undefined;
+    }
+
+    await user.save();
+    res.json({ message: 'Delegation settings updated successfully', delegatedTo: user.delegatedTo });
+  } catch (error) {
+    console.error('Delegation error:', error);
     res.status(500).json({ message: error.message });
   }
 });

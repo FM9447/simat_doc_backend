@@ -9,9 +9,23 @@ const mongoose = require('mongoose');
 const { protect, authorizeRoles } = require('../middleware/authMiddleware');
 const { upload } = require('../config/cloudinary');
 const NotificationService = require('../services/notificationService');
+ 
+// Helper: Resolve the final assignee info by following any delegation chains
+async function resolveDelegateInfo(userId) {
+  if (!userId) return null;
+  const user = await User.findById(userId);
+  if (!user) return null;
 
-
-
+  let currentUser = user;
+  let visited = new Set();
+  while (currentUser && currentUser.delegatedTo && !visited.has(currentUser._id.toString())) {
+    visited.add(currentUser._id.toString());
+    const delegate = await User.findById(currentUser.delegatedTo);
+    if (!delegate) break;
+    currentUser = delegate;
+  }
+  return { id: currentUser._id.toString(), name: currentUser.name };
+}
 // Helper: auto-assign approvers by role, student's tutor, and dept HOD
 async function autoAssign(steps, student) {
   const assigned = {};
@@ -21,7 +35,7 @@ async function autoAssign(steps, student) {
     // Precise assignment for Tutor
     if (role === 'tutor' || role === 'teacher') {
       if (student.tutorId) {
-        assigned[role] = student.tutorId.toString();
+        assigned[role] = await resolveDelegateInfo(student.tutorId);
         continue;
       }
     }
@@ -30,7 +44,7 @@ async function autoAssign(steps, student) {
     if (role === 'hod' && student.departmentId) {
       const dept = await Department.findById(student.departmentId);
       if (dept && dept.hodId) {
-        assigned[role] = dept.hodId.toString();
+        assigned[role] = await resolveDelegateInfo(dept.hodId);
         continue;
       }
     }
@@ -38,7 +52,7 @@ async function autoAssign(steps, student) {
     // Fallback search
     const user = await User.findOne(query);
     if (user) {
-      assigned[role] = user._id.toString();
+      assigned[role] = await resolveDelegateInfo(user._id);
     }
   }
   return assigned;
@@ -91,9 +105,9 @@ router.post('/', protect, authorizeRoles('student'), upload.single('file'), asyn
 
     // Push notification to first approver
     const firstRole = workflow[0];
-    const firstApproverId = assigned[firstRole];
-    if (firstApproverId) {
-      await NotificationService.send(firstApproverId, `New document pending: "${title}" from ${student?.name || 'a student'}`, 'info');
+    const firstApprover = assigned[firstRole];
+    if (firstApprover && firstApprover.id) {
+      await NotificationService.send(firstApprover.id, `New document pending: "${title}" from ${student?.name || 'a student'}`, 'info');
     }
 
     res.status(201).json(createdDoc);
@@ -122,7 +136,7 @@ router.get('/', protect, async (req, res) => {
       // Approvers see documents where they are strictly assigned
       const userId = req.user.id;
       docs = await Document.find({
-        [`assigned.${req.user.role}`]: userId
+        [`assigned.${req.user.role}.id`]: userId
       })
         .populate('studentId', 'name registerNo dept year division tutorId departmentId')
         .populate('approvals.approverId', 'name role')
@@ -183,15 +197,70 @@ router.post('/:id/approve', protect, upload.single('signature'), async (req, res
         
         // Notify next approver
         const nextRole = document.workflow[document.approvals.length];
-        const nextApproverId = document.assigned instanceof Map ? document.assigned.get(nextRole) : document.assigned[nextRole];
-        if (nextApproverId) {
-          await NotificationService.send(nextApproverId, `Action Required: New document "${document.title}" pending your approval as ${nextRole.toUpperCase()}.`, 'info');
+        const nextApproverInfo = document.assigned instanceof Map ? document.assigned.get(nextRole) : document.assigned[nextRole];
+        if (nextApproverInfo && nextApproverInfo.id) {
+          await NotificationService.send(nextApproverInfo.id, `Action Required: New document "${document.title}" pending your approval as ${nextRole.toUpperCase()}.`, 'info');
         }
       }
     }
 
     const updatedDoc = await document.save();
     res.json(updatedDoc);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+});
+
+// @desc    Transfer document to another approver
+// @route   POST /api/documents/:id/transfer
+// @access  Private (Assigned approver or Admin only)
+router.post('/:id/transfer', protect, async (req, res) => {
+  try {
+    const { newApproverId, role, comment } = req.body;
+    const document = await Document.findById(req.params.id);
+
+    if (!document) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    // Verify permission: Only the currently assigned person for that role OR Admin can transfer
+    const currentAssignedInfo = document.assigned instanceof Map ? document.assigned.get(role) : document.assigned[role];
+    const currentAssignedId = currentAssignedInfo?.id || currentAssignedInfo; // Handle legacy strings
+    
+    if (req.user.role !== 'admin' && currentAssignedId !== req.user.id) {
+       return res.status(403).json({ message: 'Only the assigned approver or admin can transfer this document' });
+    }
+
+    const newApprover = await User.findById(newApproverId);
+    if (!newApprover) {
+      return res.status(404).json({ message: 'New approver not found' });
+    }
+
+    // Perform transfer in the assignment map
+    const newAssignedInfo = { id: newApproverId, name: newApprover.name };
+    if (document.assigned instanceof Map) {
+      document.assigned.set(role, newAssignedInfo);
+    } else {
+      document.assigned[role] = newAssignedInfo;
+    }
+    
+    // Explicitly mark map as modified for Mongoose if needed
+    document.markModified('assigned');
+
+    // Add a system approval record for tracking the transfer
+    document.approvals.push({
+      approverId: req.user.id,
+      role: req.user.role,
+      action: 'forwarded',
+      comment: `Transferred to ${newApprover.name}. ${comment || ''}`,
+    });
+
+    await document.save();
+
+    // Notify new recipient
+    await NotificationService.send(newApproverId, `A document "${document.title}" has been transferred to you for ${role.toUpperCase()} approval by ${req.user.name}.`, 'info');
+
+    res.json({ message: 'Document transferred successfully', document });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

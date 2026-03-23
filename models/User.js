@@ -17,6 +17,7 @@ const userSchema = mongoose.Schema({
   year: { type: Number },     // 1, 2, 3, 4
   division: { type: String }, // A, B, C
   hodOfDeptId: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' }, // For HODs
+  delegatedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Vacation/Leave Mode
   signatureUrl: { type: String }, // Stored in Cloudinary
   isApproved: { type: Boolean, default: false },
   fcmTokens: [{ type: String }],
