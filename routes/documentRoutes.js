@@ -82,6 +82,7 @@ router.post('/', protect, authorizeRoles('student'), upload.single('file'), asyn
       formData: parsedFormData,
       workflow, // Array of roles from flowDef
       assigned, // Map of role -> userId
+      studentSignatureUrl: student.signatureUrl, // Save student's signature at time of request
       fileUrl: req.file ? (req.file.path.startsWith('http') ? req.file.path : `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`) : null,
     });
 
@@ -175,16 +176,16 @@ router.post('/:id/approve', protect, upload.single('signature'), async (req, res
       // Check if all needed persons have signed
       if (document.approvals.length >= document.workflow.length) {
         document.status = 'final_approved';
-        await NotificationService.send(document.studentId, `Your "${document.title}" is fully approved! Download your certificate.`, 'ok');
+        await NotificationService.send(document.studentId, `Your "${document.title}" is fully approved and ready for download! 🎓`, 'ok');
       } else {
         document.status = 'partially_approved';
-        await NotificationService.send(document.studentId, `Your "${document.title}" approved by ${req.user.role.toUpperCase()}.`, 'ok');
+        await NotificationService.send(document.studentId, `Your "${document.title}" has been approved by ${req.user.role.toUpperCase()}. Stage ${document.approvals.length}/${document.workflow.length} complete.`, 'ok');
         
         // Notify next approver
         const nextRole = document.workflow[document.approvals.length];
         const nextApproverId = document.assigned instanceof Map ? document.assigned.get(nextRole) : document.assigned[nextRole];
         if (nextApproverId) {
-          await NotificationService.send(nextApproverId, `Document pending your approval: "${document.title}"`, 'info');
+          await NotificationService.send(nextApproverId, `Action Required: New document "${document.title}" pending your approval as ${nextRole.toUpperCase()}.`, 'info');
         }
       }
     }

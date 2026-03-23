@@ -220,6 +220,11 @@ router.put('/users/:id/approve', protect, authorizeRoles('admin'), async (req, r
     if (user) {
       user.isApproved = isApproved;
       await user.save();
+      
+      if (isApproved) {
+        await NotificationService.send(user._id, 'Your account has been approved! You can now log in and use the system.', 'ok');
+      }
+      
       res.json({ message: `User ${isApproved ? 'approved' : 'unapproved'} successfully` });
     } else {
       res.status(404).json({ message: 'User not found' });
@@ -270,12 +275,19 @@ router.post('/fcm-token', protect, async (req, res) => {
     const { token } = req.body;
     if (!token) return res.status(400).json({ message: 'Token is required' });
 
+    // 1. Remove this token from any OTHER user who might have it (shared device cleanup)
+    await User.updateMany(
+      { fcmTokens: token, _id: { $ne: req.user._id } },
+      { $pull: { fcmTokens: token } }
+    );
+
+    // 2. Add to current user
     const user = await User.findById(req.user._id);
     if (!user.fcmTokens.includes(token)) {
       user.fcmTokens.push(token);
       await user.save();
     }
-    res.json({ message: 'FCM Token updated successfully' });
+    res.json({ message: 'FCM Token updated and synchronized successfully' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }

@@ -16,6 +16,17 @@ try {
     debugPrint('✅ Firebase Admin: Using local JSON file');
   }
 
+  if (serviceAccount && serviceAccount.private_key) {
+    serviceAccount.private_key = serviceAccount.private_key
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '')
+      .replace(/\r/g, '')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+      .join('\n');
+  }
+
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
   });
@@ -47,6 +58,12 @@ class NotificationService {
             title: this._getDisplayName(type),
             body: message,
           },
+          android: {
+            notification: {
+              icon: 'notification_icon',
+              click_action: 'FLUTTER_NOTIFICATION_CLICK',
+            }
+          },
           // You can also add custom data here
           data: {
             click_action: 'FLUTTER_NOTIFICATION_CLICK',
@@ -54,8 +71,15 @@ class NotificationService {
           }
         };
 
-        const response = await admin.messaging().sendToDevice(user.fcmTokens, payload);
-        console.log(`Successfully sent push to ${user.name}:`, response.successCount);
+        const response = (admin.apps.length > 0) 
+          ? await admin.messaging().sendToDevice(user.fcmTokens, payload)
+          : { successCount: 0, results: [] };
+        
+        if (admin.apps.length > 0) {
+          console.log(`Successfully sent push to ${user.name}:`, response.successCount);
+        } else {
+          console.log(`Push skipped for ${user.name} (Firebase not initialized)`);
+        }
         
         // Optional: Clean up invalid tokens
         if (response.results) {
