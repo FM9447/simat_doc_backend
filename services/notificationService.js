@@ -53,28 +53,30 @@ class NotificationService {
       // 2. Send Push Notification via FCM
       const user = await User.findById(userId);
       if (user && user.fcmTokens && user.fcmTokens.length > 0) {
-        const payload = {
+        const messages = user.fcmTokens.map(token => ({
+          token: token,
           notification: {
             title: NotificationService._getDisplayName(type),
             body: message,
           },
           android: {
             notification: {
-              icon: 'ic_launcher', // Use standard launcher icon
-              click_action: 'FLUTTER_NOTIFICATION_CLICK',
-              channel_id: 'doctransit_channel', // Match Flutter channel
-              notification_priority: 'PRIORITY_HIGH',
+              icon: 'ic_launcher',
+              clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+              channelId: 'doctransit_channel',
+              priority: 'high',
+              sound: 'default'
             }
           },
           data: {
             click_action: 'FLUTTER_NOTIFICATION_CLICK',
             type: type,
           }
-        };
+        }));
 
         const response = (admin.apps.length > 0) 
-          ? await admin.messaging().sendToDevice(user.fcmTokens, payload)
-          : { successCount: 0, results: [] };
+          ? await admin.messaging().sendEach(messages)
+          : { successCount: 0, responses: [] };
         
         if (admin.apps.length > 0) {
           console.log(`Successfully sent push to ${user.name}:`, response.successCount);
@@ -83,10 +85,10 @@ class NotificationService {
         }
         
         // Optional: Clean up invalid tokens
-        if (response.results) {
-          response.results.forEach((result, index) => {
-            const error = result.error;
-            if (error) {
+        if (response.responses) {
+          response.responses.forEach((res, index) => {
+            if (!res.success && res.error) {
+              const error = res.error;
               console.error('Failure sending notification to', user.fcmTokens[index], error);
               if (error.code === 'messaging/invalid-registration-token' ||
                   error.code === 'messaging/registration-token-not-registered') {

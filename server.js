@@ -28,6 +28,7 @@ app.use('/api/documents', require('./routes/documentRoutes'));
 app.use('/api/workflow', require('./routes/workflowRoutes'));
 app.use('/api/notifications', require('./routes/notificationRoutes'));
 app.use('/api/departments', require('./routes/departmentRoutes'));
+app.use('/api/feedback', require('./routes/feedbackRoutes'));
 
 // Basic route
 app.get('/', (req, res) => {

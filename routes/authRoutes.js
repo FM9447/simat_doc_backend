@@ -29,10 +29,10 @@ router.post('/register', async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Security: Prevent public registration as 'admin'
+    // Security: Prevent public registration as 'admin' or 'principal'
     let finalRole = role === 'teacher' ? 'tutor' : role;
-    if (finalRole === 'admin') {
-      finalRole = 'student'; // Silently downgrade or return error. Downgrading is safer for preventing enumeration.
+    if (finalRole === 'admin' || finalRole === 'principal') {
+      finalRole = 'student'; // Silently downgrade
     }
 
     const user = await User.create({
@@ -226,11 +226,28 @@ router.get('/users', protect, authorizeRoles('admin'), async (req, res) => {
 // @access  Private
 router.get('/colleagues', protect, async (req, res) => {
   try {
-    const users = await User.find({ 
-      role: req.user.role, 
-      _id: { $ne: req.user._id },
-      isApproved: true 
-    }).select('name email role');
+    let query = { _id: { $ne: req.user._id }, isApproved: true };
+    const userRole = req.user.role;
+
+    if (userRole === 'tutor') {
+      // Tutors can delegate to fellow tutors in same dept
+      query.role = 'tutor';
+      query.departmentId = req.user.departmentId;
+    } else if (userRole === 'hod') {
+      // HODs can delegate to ANY tutor
+      query.role = 'tutor';
+    } else if (userRole === 'principal') {
+      // Principals can delegate to other Principals or Office
+      query.role = { $in: ['principal', 'office'] };
+    } else if (userRole === 'office') {
+      // Office can delegate to other Office staff
+      query.role = 'office';
+    } else {
+      // For other roles, they cannot delegate to anyone
+      return res.status(403).json({ message: 'This role is not allowed to delegate' });
+    }
+
+    const users = await User.find(query).select('name email role');
     res.json(users);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -328,28 +345,55 @@ router.put('/delegate', protect, async (req, res) => {
     if (delegatedToId) {
       const delegate = await User.findById(delegatedToId);
       if (!delegate) return res.status(404).json({ message: 'Delegate user not found' });
-      if (delegate.role !== user.role && user.role !== 'admin') {
-         return res.status(400).json({ message: 'Delegate must have the same role' });
+      
+      // Role validation logic (updated per user request)
+      let isValid = false;
+      const uRole = user.role;
+      const dRole = delegate.role;
+
+      if (uRole === 'tutor' && dRole === 'tutor' && delegate.departmentId.toString() === user.departmentId.toString()) {
+        isValid = true;
+      } else if (uRole === 'hod' && dRole === 'tutor') {
+        // HOD can delegate to ANY tutor
+        isValid = true;
+      } else if (uRole === 'principal' && (dRole === 'principal' || dRole === 'office')) {
+        // Principal can delegate to another Principal or Office
+        isValid = true;
+      } else if (uRole === 'office' && dRole === 'office') {
+        isValid = true;
+      } else if (uRole === 'admin') {
+        isValid = true;
       }
+
+      if (!isValid) {
+        return res.status(400).json({ message: `Invalid delegate: ${uRole.toUpperCase()} cannot delegate to ${dRole.toUpperCase()}${uRole === 'tutor' ? ' in a different department' : ''}` });
+      }
+
       user.delegatedTo = delegatedToId;
 
-      const roleField = `assigned.${user.role}`;
+      // Transfer CURRENT pending requests
       const documents = await Document.find({ 
-        [roleField]: user._id,
+        [`assigned.${user.role}.id`]: user._id,
         status: { $in: ['pending', 'partially_approved'] }
       });
 
+      console.log(`Delegation: Transferring ${documents.length} documents from ${user.name} to ${delegate.name}`);
+
       for (const doc of documents) {
-        doc.assigned[user.role] = delegatedToId;
+        // Update the assignment to the delegate's info
+        doc.assigned[user.role] = { id: delegatedToId, name: delegate.name };
         doc.markModified('assigned');
+        
         doc.approvals.push({
           approverId: user._id,
           role: user.role,
           action: 'forwarded',
-          comment: `System: Auto-delegated to ${delegate.name} due to Vacation Mode.`,
+          comment: `System: Auto-delegated to ${delegate.name} (Vacation Mode).`,
         });
+        
         await doc.save();
-        await NotificationService.send(delegatedToId, `New document delegated to you: "${doc.title}"`, 'info');
+        // Notify the delegate
+        await NotificationService.send(delegatedToId, `Action Required: Document "${doc.title}" delegated to you from ${user.name}.`, 'info');
       }
     } else {
       user.delegatedTo = undefined;
