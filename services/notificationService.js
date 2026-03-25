@@ -21,12 +21,27 @@ function initializeFirebase() {
       const hasEnd = key.includes('-----END PRIVATE KEY-----');
       console.log(`📊 [${source}] Key Diagnostics: Length=${keyLength}, Has BEGIN=${hasBegin}, Has END=${hasEnd}`);
 
-      // Aggressive sanitization
-      key = key.replace(/\\n/g, '\n').trim();
+      // Ultra-aggressive sanitization: Remove all whitespace from the base64 content
+      let content = key;
+      if (hasBegin && hasEnd) {
+        const parts = key.split('-----BEGIN PRIVATE KEY-----');
+        if (parts.length > 1) {
+          const subparts = parts[1].split('-----END PRIVATE KEY-----');
+          if (subparts.length > 0) {
+            content = subparts[0];
+          }
+        }
+      }
       
-      // Ensure standard PEM format
-      if (!key.includes('-----BEGIN PRIVATE KEY-----')) {
-        key = `-----BEGIN PRIVATE KEY-----\n${key.replace(/\s/g, '\n')}\n-----END PRIVATE KEY-----`;
+      // Strip ALL whitespace, newlines, and non-base64 characters
+      content = content.replace(/\s/g, '');
+      
+      // Re-format into standard PEM (64 chars per line)
+      const lines = content.match(/.{1,64}/g);
+      if (lines) {
+        key = `-----BEGIN PRIVATE KEY-----\n${lines.join('\n')}\n-----END PRIVATE KEY-----`;
+      } else {
+        throw new Error('Private key content is empty or invalid after stripping whitespace');
       }
       
       serviceAccount.private_key = key;
