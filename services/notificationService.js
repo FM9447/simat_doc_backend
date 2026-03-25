@@ -62,17 +62,28 @@ function initializeFirebase() {
     }
   };
 
-  // 1. Try Environment Variable first
+  // 1. Try Base64 Environment Variable first (Most Robust)
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_B64) {
+    try {
+      const decoded = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_B64, 'base64').toString('utf8');
+      const sa = JSON.parse(decoded);
+      if (tryInitialize(sa, 'ENV_VAR_B64')) return true;
+    } catch (e) {
+      console.error('❌ Failed to parse FIREBASE_SERVICE_ACCOUNT_B64:', e.message);
+    }
+  }
+
+  // 2. Try JSON Environment Variable
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     try {
       const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-      if (tryInitialize(sa, 'ENV_VAR')) return true;
+      if (tryInitialize(sa, 'ENV_VAR_JSON')) return true;
     } catch (e) {
       console.error('❌ Failed to parse FIREBASE_SERVICE_ACCOUNT JSON:', e.message);
     }
   }
 
-  // 2. Fallback to local file
+  // 3. Fallback to local file
   try {
     const sa = require('../firebase-service-account.json');
     if (tryInitialize(sa, 'LOCAL_JSON')) return true;
