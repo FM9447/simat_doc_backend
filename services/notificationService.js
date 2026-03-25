@@ -5,45 +5,68 @@ const User = require('../models/User');
 function initializeFirebase() {
   if (admin.apps.length > 0) return true;
 
-  try {
-    let serviceAccount;
-    
-    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-      console.log('✅ Firebase Admin: Using Environment Variable');
-    } else {
-      // Fallback to local file
-      try {
-        serviceAccount = require('../firebase-service-account.json');
-        console.log('✅ Firebase Admin: Using local JSON file');
-      } catch (e) {
-        console.error('❌ Firebase Admin: Local JSON file not found or invalid:', e.message);
-        return false;
+  console.log('--- 🚀 Firebase Admin: Initializing... ---');
+  
+  const tryInitialize = (serviceAccount, source) => {
+    try {
+      if (!serviceAccount || !serviceAccount.private_key) {
+        throw new Error(`Missing mandatory fields in service account from ${source}`);
       }
-    }
 
-    if (serviceAccount && serviceAccount.private_key) {
       let key = serviceAccount.private_key;
-      key = key.replace(/\\n/g, '\n');
       
+      // Diagnostics: Log length and basic structure
+      const keyLength = key.length;
+      const hasBegin = key.includes('-----BEGIN PRIVATE KEY-----');
+      const hasEnd = key.includes('-----END PRIVATE KEY-----');
+      console.log(`📊 [${source}] Key Diagnostics: Length=${keyLength}, Has BEGIN=${hasBegin}, Has END=${hasEnd}`);
+
+      // Aggressive sanitization
+      key = key.replace(/\\n/g, '\n').trim();
+      
+      // Ensure standard PEM format
       if (!key.includes('-----BEGIN PRIVATE KEY-----')) {
-        key = `-----BEGIN PRIVATE KEY-----\n${key}\n-----END PRIVATE KEY-----`;
+        key = `-----BEGIN PRIVATE KEY-----\n${key.replace(/\s/g, '\n')}\n-----END PRIVATE KEY-----`;
       }
       
       serviceAccount.private_key = key;
-    }
 
-    if (!admin.apps.length) {
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-      });
-      console.log('✅ Firebase Admin: Cloud Messaging Initialized');
+      if (!admin.apps.length) {
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccount)
+        });
+        console.log(`✅ Firebase Admin: Initialized successfully via ${source}`);
+      }
+      return true;
+    } catch (error) {
+      console.error(`⚠️ [${source}] Initialization failed:`, error.message);
+      if (error.stack && error.stack.includes('ASN.1')) {
+        console.error('💡 TIP: This error usually means the private_key is truncated or malformed in your environment variables.');
+      }
+      return false;
     }
-    return true;
-  } catch (error) {
-    console.error('⚠️ Firebase Admin initialization failed:', error.stack || error.message);
-    return false;
+  };
+
+  // 1. Try Environment Variable first
+  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+    try {
+      const sa = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      if (tryInitialize(sa, 'ENV_VAR')) return true;
+    } catch (e) {
+      console.error('❌ Failed to parse FIREBASE_SERVICE_ACCOUNT JSON:', e.message);
+    }
   }
+
+  // 2. Fallback to local file
+  try {
+    const sa = require('../firebase-service-account.json');
+    if (tryInitialize(sa, 'LOCAL_JSON')) return true;
+  } catch (e) {
+    console.error('❌ Local JSON file not found or invalid:', e.message);
+  }
+
+  console.error('🛑 Firebase Admin: ALL initialization attempts failed.');
+  return false;
 }
 
 // Initial attempt
