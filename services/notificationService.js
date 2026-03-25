@@ -2,37 +2,52 @@ const admin = require('firebase-admin');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
 
-// Initialize Firebase Admin
-try {
-  let serviceAccount;
-  
-  if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    // If provided via Environment Variable (Best for Production/Azure)
-    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-    debugPrint('✅ Firebase Admin: Using Environment Variable');
-  } else {
-    // Fallback to local file (Good for local development)
-    serviceAccount = require('../firebase-service-account.json');
-    debugPrint('✅ Firebase Admin: Using local JSON file');
-  }
+function initializeFirebase() {
+  if (admin.apps.length > 0) return true;
 
-  if (serviceAccount && serviceAccount.private_key) {
-    serviceAccount.private_key = serviceAccount.private_key
-      .replace(/\\n/g, '\n')
-      .replace(/\\r/g, '')
-      .replace(/\r/g, '')
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0)
-      .join('\n');
-  }
+  try {
+    let serviceAccount;
+    
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+      console.log('✅ Firebase Admin: Using Environment Variable');
+    } else {
+      // Fallback to local file
+      try {
+        serviceAccount = require('../firebase-service-account.json');
+        console.log('✅ Firebase Admin: Using local JSON file');
+      } catch (e) {
+        console.error('❌ Firebase Admin: Local JSON file not found or invalid:', e.message);
+        return false;
+      }
+    }
 
-  admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
-  });
-} catch (error) {
-  console.error('⚠️ Firebase Admin initialization failed. Push notifications will be disabled.', error.message);
+    if (serviceAccount && serviceAccount.private_key) {
+      let key = serviceAccount.private_key;
+      key = key.replace(/\\n/g, '\n');
+      
+      if (!key.includes('-----BEGIN PRIVATE KEY-----')) {
+        key = `-----BEGIN PRIVATE KEY-----\n${key}\n-----END PRIVATE KEY-----`;
+      }
+      
+      serviceAccount.private_key = key;
+    }
+
+    if (!admin.apps.length) {
+      admin.initializeApp({
+        credential: admin.credential.cert(serviceAccount)
+      });
+      console.log('✅ Firebase Admin: Cloud Messaging Initialized');
+    }
+    return true;
+  } catch (error) {
+    console.error('⚠️ Firebase Admin initialization failed:', error.stack || error.message);
+    return false;
+  }
 }
+
+// Initial attempt
+initializeFirebase();
 
 // Helper for cleaner logging
 function debugPrint(msg) {
@@ -74,14 +89,22 @@ class NotificationService {
           }
         }));
 
-        const response = (admin.apps.length > 0) 
+        // Ensure initialized before sending
+        if (admin.apps.length === 0) {
+          console.log('🔄 Attempting re-initialization of Firebase Admin...');
+          initializeFirebase();
+        }
+
+        const isInitialized = admin.apps.length > 0;
+        
+        const response = isInitialized 
           ? await admin.messaging().sendEach(messages)
           : { successCount: 0, responses: [] };
         
-        if (admin.apps.length > 0) {
+        if (isInitialized) {
           console.log(`Successfully sent push to ${user.name}:`, response.successCount);
         } else {
-          console.log(`Push skipped for ${user.name} (Firebase not initialized)`);
+          console.log(`❌ Push skipped for ${user.name} (Firebase could not be initialized)`);
         }
         
         // Optional: Clean up invalid tokens

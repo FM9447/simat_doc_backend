@@ -266,4 +266,57 @@ router.post('/:id/transfer', protect, async (req, res) => {
   }
 });
 
+// @desc    Update document details (Staff only)
+// @route   PUT /api/documents/:id
+// @access  Private
+router.put('/:id', protect, async (req, res) => {
+  try {
+    const { title, description, formData, customHeading } = req.body;
+    const document = await Document.findById(req.params.id);
+
+    if (!document) {
+      return res.status(404).json({ message: 'Document not found' });
+    }
+
+    // Authorization: Only the currently assigned person OR Student (if pending) OR Admin can edit
+    const user = req.user;
+    let canEdit = false;
+
+    if (user.role === 'admin') {
+      canEdit = true;
+    } else if (user.role === 'student' && document.studentId.toString() === user.id && document.status === 'pending') {
+      canEdit = true;
+    } else {
+      // Check if user is currently assigned to any role in this document
+      const assigned = document.assigned;
+      for (let role in assigned) {
+        const info = assigned[role];
+        if (info.id === user.id || info === user.id) {
+          canEdit = true;
+          break;
+        }
+      }
+    }
+
+    if (!canEdit) {
+      return res.status(403).json({ message: 'You are not authorized to edit this document' });
+    }
+
+    // Update fields
+    if (title) document.title = title;
+    if (description) document.description = description;
+    if (customHeading !== undefined) document.customHeading = customHeading;
+    if (formData) {
+      // Merge or replace formData
+      document.formData = { ...document.formData, ...formData };
+    }
+
+    await document.save();
+    res.json(document);
+  } catch (error) {
+    console.error('Document update error:', error);
+    res.status(500).json({ message: error.message });
+  }
+});
+
 module.exports = router;
